@@ -7,7 +7,6 @@ import os
 import sys
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -21,10 +20,12 @@ from ingest import load_documents
 
 load_dotenv()
 
-N_SAMPLES = 500
+N_SAMPLES = 100
 SEED = 42
 OUTPUT = Path("eval_data/ground_truth.csv")
 MODEL = "llama-3.3-70b-versatile"
+REQUEST_DELAY_SECONDS = 2.2
+RETRY_DELAYS = (5, 10, 20)
 
 
 class GroundTruth(BaseModel):
@@ -39,7 +40,7 @@ Return a JSON object with a single 'question' field."""
 
 def generate_question(client, doc):
     prompt = f"Wine review:\n{doc['text'][:600]}"
-    for attempt in range(3):
+    for attempt, retry_delay in enumerate(RETRY_DELAYS, start=1):
         try:
             response = client.chat.completions.create(
                 model=MODEL,
@@ -47,22 +48,19 @@ def generate_question(client, doc):
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "ground_truth",
-                        "schema": GroundTruth.model_json_schema(),
-                    },
-                },
+                response_format={"type": "json_object"},
                 max_tokens=150,
             )
             result = GroundTruth.model_validate_json(response.choices[0].message.content)
             return {"doc_id": doc["doc_id"], "question": result.question}
         except Exception as e:
-            if attempt == 2:
+            if attempt == len(RETRY_DELAYS):
                 print(f"  failed for doc {doc['doc_id']}: {e}")
                 return None
-            time.sleep(2 ** attempt)
+            if "rate_limit_exceeded" in str(e) or "429" in str(e):
+                time.sleep(retry_delay)
+            else:
+                time.sleep(2 ** attempt)
 
 
 def main():
@@ -79,12 +77,11 @@ def main():
     print(f"Generating {len(sampled)} ground truth Q&A pairs...")
 
     results = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(generate_question, client, doc) for doc in sampled]
-        for f in tqdm(futures):
-            result = f.result()
-            if result:
-                results.append(result)
+    for doc in tqdm(sampled):
+        result = generate_question(client, doc)
+        if result:
+            results.append(result)
+        time.sleep(REQUEST_DELAY_SECONDS)
 
     df = pd.DataFrame(results)
     df.to_csv(OUTPUT, index=False)

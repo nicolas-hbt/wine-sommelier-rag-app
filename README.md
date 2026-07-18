@@ -1,6 +1,6 @@
 # Wine Sommelier RAG Application
 
-An end-to-end Retrieval-Augmented Generation (RAG) application built on the WineEnthusiast dataset (130k wine reviews). Ask it about wine pairings, regions, grape varieties, tasting notes, and recommendations — it searches the knowledge base and answers using the Groq LLM API (free).
+An end-to-end Retrieval-Augmented Generation (RAG) application built on the WineEnthusiast dataset (130k wine reviews). Ask it about wine pairings, regions, grape varieties, tasting notes, and recommendations — it searches the knowledge base and answers using the **Groq LLM API (free)**. You can easily plug OpenAI API if you prefer.
 
 ## Problem
 
@@ -58,13 +58,6 @@ uv venv && source .venv/bin/activate
 uv pip install -r pyproject.toml
 ```
 
-Or with pip:
-```bash
-pip install huggingface-hub==0.27.0 numpy==1.26.4 onnxruntime==1.20.1 \
-    openai==1.93.0 pandas==2.2.3 pgvector==0.3.6 "psycopg[binary]==3.2.4" \
-    pydantic==2.10.4 python-dotenv==1.0.1 streamlit==1.41.1 tokenizers==0.21.0 tqdm==4.67.1
-```
-
 ### 2. Configure environment
 
 ```bash
@@ -72,13 +65,23 @@ cp .env.example .env
 # Edit .env and add your GROQ_API_KEY
 ```
 
-### 3. Download the ONNX embedding model
+### 3. Download the dataset CSV
+
+Download the Wine Reviews dataset and place `winemag-data-130k-v2.csv` in the project root, next to `ingest.py` and other python files:
 
 ```bash
-python wine_assistant/download_model.py
+kaggle datasets download -d zynicide/wine-reviews -p . --unzip
 ```
 
-### 4. Run ingestion
+The CSV is gitignored, so it should stay local in the repository root.
+
+### 4. Download the ONNX embedding model
+
+```bash
+python download_model.py
+```
+
+### 5. Run ingestion
 
 ```bash
 python ingest.py
@@ -102,6 +105,57 @@ streamlit run dashboard.py --server.port 8502
 
 Open http://localhost:8502.
 
+## Manual setup path
+
+If the full `docker compose up --build` flow does not work, use this intermediate/manual path instead. The database must be running before any command that touches Postgres (`db_init.py`, `ingest.py`, `app.py`, `dashboard.py`).
+
+### 1. Start PostgreSQL with pgvector
+
+The simplest one-liner is to start only the database service:
+
+```bash
+docker compose up -d postgres
+```
+
+If you prefer a direct Docker command, use:
+
+```bash
+docker run -d \
+  --name wine-postgres \
+  -p 5432:5432 \
+  -e POSTGRES_DB=wine_assistant \
+  -e POSTGRES_USER=user \
+  -e POSTGRES_PASSWORD=password \
+  -v wine_postgres_data:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+```
+
+`ingest.py` and `app.py` call `db_init.py` internally, so you do not need a separate schema-init step.
+
+### 2. Download the ONNX embedding model
+
+```bash
+python download_model.py
+```
+
+### 3. Run ingestion
+
+```bash
+python ingest.py
+```
+
+### 4. Start the app
+
+```bash
+streamlit run app.py
+```
+
+### 5. Start the dashboard (optional)
+
+```bash
+streamlit run dashboard.py --server.port 8502
+```
+
 ## Running with Docker Compose
 
 ```bash
@@ -114,8 +168,6 @@ docker compose up --build
 - App: http://localhost:8501
 - Dashboard: http://localhost:8502
 
-> **Note**: The first build downloads the ONNX model and ingests 130k documents — this takes several minutes.
-
 ## Evaluation
 
 ### Generate ground truth
@@ -124,7 +176,7 @@ docker compose up --build
 python generate_ground_truth.py
 ```
 
-Generates 500 Q→doc_id pairs using Groq. Saves to `eval_data/ground_truth.csv`.
+Generates 100 Q→doc_id pairs using Groq JSON object mode plus Pydantic validation. The script paces requests to stay under Groq's free-tier RPM limit, so it runs sequentially and can take a while. Saves to `eval_data/ground_truth.csv`.
 
 ### Evaluate retrieval
 
@@ -150,7 +202,7 @@ Hybrid search performs best — it combines the strengths of both approaches.
 python evaluate_rag.py
 ```
 
-Compares CONCISE and DETAILED prompt templates using LLM-as-judge (RELEVANT / PARTLY_RELEVANT / NON_RELEVANT).
+Compares CONCISE and DETAILED prompt templates using LLM-as-judge (RELEVANT / PARTLY_RELEVANT / NON_RELEVANT). The judge also uses Groq JSON object mode plus Pydantic validation.
 
 **Results (example):**
 

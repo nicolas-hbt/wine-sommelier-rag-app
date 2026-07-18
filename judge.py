@@ -41,13 +41,7 @@ def _judge_once(client, question, answer, model=JUDGE_MODEL):
             {"role": "system", "content": JUDGE_SYSTEM},
             {"role": "user", "content": prompt},
         ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "relevance_verdict",
-                "schema": RelevanceVerdict.model_json_schema(),
-            },
-        },
+        response_format={"type": "json_object"},
     )
     return RelevanceVerdict.model_validate_json(response.choices[0].message.content)
 
